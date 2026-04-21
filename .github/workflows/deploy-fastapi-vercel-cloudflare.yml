@@ -91,7 +91,7 @@ jobs:
         with:
           doppler-token: ${{ secrets.DOPPLER_TOKEN }}
           doppler-project: 20206205tech
-          doppler-config: kong
+          doppler-config: prod
           inject-env-vars: true
 
       - name: Generate Metadata
