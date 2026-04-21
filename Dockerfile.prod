@@ -1,0 +1,53 @@
+# ==========================================
+# Bước 1: Builder stage
+# ==========================================
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT="/app/.venv"
+
+WORKDIR /app
+
+# 1. Cài đặt build-essential để có trình biên dịch mã C
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Chạy uv sync
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-project --no-dev
+
+COPY . /app
+
+# Sync lại để cài đặt chính project hiện tại (không bao gồm dev dependencies)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+# ==========================================
+# Bước 2: Runtime stage
+# ==========================================
+FROM python:3.13-slim-bookworm
+
+# Ngăn Python tạo file .pyc và bật unbuffered logging để xem log Heroku realtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Copy môi trường ảo (.venv) từ builder sang
+COPY --from=builder /app/.venv /app/.venv
+
+COPY . /app
+
+# Thiết lập đường dẫn môi trường
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
+
+ENV PORT=8000
+
+# Chú ý: Cần dùng `sh -c` để Uvicorn có thể đọc được biến môi trường ${PORT} do Heroku cấp phát
+# CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${PORT}"]

@@ -1,0 +1,156 @@
+name: Deploy FastAPI to Vercel + Cloudflare DNS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  install-deps:
+    runs-on: ubuntu-latest
+    outputs:
+      deps-cache-key: ${{ steps.cache-key.outputs.CACHE_KEY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Calculate cache key
+        id: cache-key
+        run: |
+          echo "CACHE_KEY=deps-uv-${{ hashFiles('uv.lock') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+  # unit-test:
+  #   runs-on: ubuntu-latest
+  #   needs: install-deps
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Install uv
+  #       uses: astral-sh/setup-uv@v5
+  #       with:
+  #         enable-cache: true
+  #         cache-dependency-glob: "uv.lock"
+
+  #     - name: Fetch secrets from Doppler
+  #       id: doppler
+  #       uses: dopplerhq/secrets-fetch-action@v1.2.0
+  #       with:
+  #         doppler-token: ${{ secrets.DOPPLER_TOKEN }}
+  #         doppler-project: ${{ secrets.DOPPLER_PROJECT }}
+  #         doppler-config: ${{ secrets.DOPPLER_CONFIG }}
+
+  #     - name: Test Coverage
+  #       # Giả định bạn dùng pytest và pytest-cov
+  #       run: uv run pytest --cov=./ --cov-report=xml
+
+  #     - name: Upload to Codecov
+  #       uses: codecov/codecov-action@v5
+  #       with:
+  #         token: ${{ steps.doppler.outputs.CODECOV_TOKEN }}
+  #         file: ./coverage.xml
+  #         fail_ci_if_error: true
+
+  # e2e-test:
+  #   runs-on: ubuntu-latest
+  #   needs: install-deps
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Install uv
+  #       uses: astral-sh/setup-uv@v5
+  #       with:
+  #         enable-cache: true
+  #     - name: Test E2E
+  #       run: uv run pytest tests/e2e  # Thay đổi đường dẫn tùy cấu trúc project của bạn
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: [install-deps]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch secrets from Doppler
+        id: doppler
+        uses: dopplerhq/secrets-fetch-action@v1.2.0
+        with:
+          doppler-token: ${{ secrets.DOPPLER_TOKEN }}
+          doppler-project: 20206205tech
+          doppler-config: kong
+          inject-env-vars: true
+
+      - name: Generate Metadata
+        id: meta
+        run: |
+          REPO_NAME_LOW=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+          echo "name=$REPO_NAME_LOW" >> $GITHUB_OUTPUT
+          echo "full_domain=${REPO_NAME_LOW}.20206205.tech" >> $GITHUB_OUTPUT
+          echo "subdomain=${REPO_NAME_LOW}" >> $GITHUB_OUTPUT
+
+      - name: Initialize Vercel Project
+        run: |
+          PROJECT_NAME="${{ steps.meta.outputs.name }}"
+          echo "Checking/Creating project: $PROJECT_NAME..."
+          npx vercel project add "$PROJECT_NAME" --token=${{ steps.doppler.outputs.VERCEL_TOKEN }} --yes || true
+          echo "Linking project..."
+          npx vercel pull --yes --environment=production --token=${{ steps.doppler.outputs.VERCEL_TOKEN }}
+
+      - name: Sync Specific Secrets to Vercel
+        run: |
+          V_CMD="npx vercel --token=${{ steps.doppler.outputs.VERCEL_TOKEN }}"
+
+          # Thêm Domain cho Vercel (giữ lại từ logic cũ của bạn)
+          $V_CMD domains add ${{ steps.meta.outputs.full_domain }} --force || true
+
+          # Đồng bộ biến NAME_SERVICE
+          printf "%s" "${{ github.event.repository.name }}" | $V_CMD env add NAME_SERVICE production --force || true
+
+
+          printf "%s" "${{ steps.doppler.outputs.DATA_PIPELINE_VBPL_DATABASE_URL }}" | $V_CMD env add DATA_PIPELINE_VBPL_DATABASE_URL production --force || true
+          printf "%s" "${{ steps.doppler.outputs.SUPABASE_PROJECT_ID }}" | $V_CMD env add SUPABASE_PROJECT_ID production --force || true
+
+      - name: Deploy to Vercel
+        id: vercel_deploy
+        run: |
+          PARAM="--token=${{ steps.doppler.outputs.VERCEL_TOKEN }} --yes --prod"
+          DEPLOY_URL=$(npx vercel deploy $PARAM)
+          echo "url=$DEPLOY_URL" >> $GITHUB_OUTPUT
+
+      - name: Configure Cloudflare DNS
+        env:
+          CF_TOKEN: ${{ steps.doppler.outputs.CLOUDFLARE_API_TOKEN }}
+          ZONE_ID: ${{ steps.doppler.outputs.CLOUDFLARE_ZONE_ID }}
+        run: |
+          DOMAIN_NAME="${{ steps.meta.outputs.full_domain }}"
+          RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records?name=$DOMAIN_NAME" \
+            -H "Authorization: Bearer $CF_TOKEN" | jq -r '.result[0].id // empty')
+
+          DNS_PAYLOAD=$(jq -n --arg name "${{ steps.meta.outputs.subdomain }}" --arg content "${{ steps.doppler.outputs.VERCEL_CNAME }}" \
+            '{type:"CNAME", name:$name, content:$content, ttl:1, proxied:false}')
+
+          if [ -z "$RECORD_ID" ]; then
+            METHOD="POST"
+            URL="https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records"
+          else
+            METHOD="PUT"
+            URL="https://api.cloudflare.com/client/v4/zones/$ZONE_ID/dns_records/$RECORD_ID"
+          fi
+
+          echo "Updating DNS Record for $DOMAIN_NAME..."
+          curl -X $METHOD "$URL" -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" -d "$DNS_PAYLOAD"
