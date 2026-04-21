@@ -18,8 +18,8 @@ jobs:
         uses: dopplerhq/secrets-fetch-action@v1.2.0
         with:
           doppler-token: ${{ secrets.DOPPLER_TOKEN }}
-          doppler-project: ${{ secrets.DOPPLER_PROJECT }}
-          doppler-config: ${{ secrets.DOPPLER_CONFIG }}
+          doppler-project: 20206205tech
+          doppler-config: prod
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
