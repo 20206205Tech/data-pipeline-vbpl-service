@@ -1,9 +1,11 @@
-name: Build and Push Production Image
+name: Build and Push Image
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   build-and-push:
@@ -34,18 +36,19 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.doppler.outputs.DOCKERHUB_USERNAME }}/data-pipeline-service
+          images: ${{ steps.doppler.outputs.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}
           tags: |
             type=raw,value=latest
             type=sha,format=short
 
       - name: Build and push Docker image
+        if: github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile.prod
+          file: ./Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ steps.doppler.outputs.DOCKERHUB_USERNAME }}/data-pipeline-service:buildcache
-          cache-to: type=registry,ref=${{ steps.doppler.outputs.DOCKERHUB_USERNAME }}/data-pipeline-service:buildcache,mode=max
+          cache-from: type=registry,ref=${{ steps.doppler.outputs.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:buildcache
+          cache-to: type=registry,ref=${{ steps.doppler.outputs.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:buildcache,mode=max

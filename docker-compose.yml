@@ -1,0 +1,16 @@
+services:
+  chatbot-service:
+    container_name: chatbot-service
+    image: chatbot-service:latest
+    ports:
+      - "30003:30003"
+      - "50051:50051"
+    env_file:
+      - .env
+    networks:
+      - shared_net
+
+networks:
+  shared_net:
+    name: shared_microservices_net
+    external: true

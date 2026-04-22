@@ -46,8 +46,5 @@ COPY . /app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
 
-ENV PORT=8000
-
-# Chú ý: Cần dùng `sh -c` để Uvicorn có thể đọc được biến môi trường ${PORT} do Heroku cấp phát
-# CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
-CMD ["sh", "-c", "/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+# Chạy ứng dụng
+CMD ["python", "main.py"]
