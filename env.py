@@ -29,7 +29,7 @@ DESCRIPTION = f"""
 * [Local Swagger](http://localhost:{PORT}/docs)
 * [Dev API](https://dev-code-{SERVICE_NAME}.20206205.tech)
 * [Dev Swagger](https://dev-code-{SERVICE_NAME}.20206205.tech/docs)
-* [Đăng nhập với Google](https://{SUPABASE_PROJECT_ID}.supabase.co/auth/v1/authorize?provider=google)
+* [Đăng nhập với Google](https://{SUPABASE_PROJECT_ID}.supabase.co/auth/v1/authorize?provider=google&redirect_to=https://20206205tech.github.io/auth-callback)
 
 """.strip()
 
